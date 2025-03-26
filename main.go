@@ -2,8 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
+
+	"github.com/linkedin/goavro/v2"
 
 	"github.com/gin-gonic/gin"
 	"github.com/razvanmarinn/schema-registry/internal/models"
@@ -29,7 +32,7 @@ func setupRouter(database *sql.DB) *gin.Engine {
 			ProjectName: projectName,
 			Name:        body.SchemaName,
 			Fields:      body.Fields,
-			Version:    1,
+			Version:     1,
 		}
 		err := db.CreateSchema(database, schema)
 		if err != nil {
@@ -81,10 +84,41 @@ func main() {
 	defer database.Close()
 
 	r := setupRouter(database)
-	r.Run(":8080")
+	r.Run(":8081")
 }
 
 type CreateSchemaBody struct {
 	SchemaName string         `json:"schema_name" binding:"required"`
 	Fields     []models.Field `json:"fields" binding:"required"`
+	Type       string         `json:"type" binding:"required"`
+}
+
+func generateAvroSchema(schemaName string, fields []models.Field) (string, error) {
+	avroFields := []map[string]interface{}{}
+	for _, field := range fields {
+		avroFields = append(avroFields, map[string]interface{}{
+			"name": field.Name,
+			"type": field.Type,
+		})
+	}
+
+	avroSchema := map[string]interface{}{
+		"type":      "record",
+		"name":      schemaName,
+		"namespace": "com.example",
+		"fields":    avroFields,
+	}
+
+	schemaBytes, err := json.Marshal(avroSchema)
+	if err != nil {
+		return "", err
+	}
+
+	// Validate the generated Avro schema
+	_, err = goavro.NewCodec(string(schemaBytes))
+	if err != nil {
+		return "", err
+	}
+
+	return string(schemaBytes), nil
 }
