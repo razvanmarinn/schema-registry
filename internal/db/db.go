@@ -6,29 +6,56 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 
 	"github.com/razvanmarinn/schema-registry/internal/models"
 
 	_ "github.com/lib/pq"
 )
 
-const (
-	host     = "localhost"
-	port     = 5432
-	user     = "postgres"
-	password = "1234"
-	dbname   = "test"
-)
+// GetDBConfig returns database connection parameters from environment variables
+// with fallback to default values
+func GetDBConfig() (string, int, string, string, string) {
+	host := getEnv("DB_HOST", "postgres") // Use Kubernetes service name
+	portStr := getEnv("DB_PORT", "5432")
+	port := 5432 // Default port
+	if portStr != "" {
+		fmt.Sscanf(portStr, "%d", &port)
+	}
+	user := getEnv("DB_USER", "postgresuser")
+	password := getEnv("DB_PASSWORD", "postgrespassword")
+	dbname := getEnv("DB_NAME", "test")
+
+	return host, port, user, password, dbname
+}
+
+// getEnv gets an environment variable or returns a default value
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
 
 func Connect_to_db() (*sql.DB, error) {
+	host, port, user, password, dbname := GetDBConfig()
+
 	defaultConnStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=disable",
 		host, port, user, password)
 
+	log.Printf("Connecting to default database at %s:%d", host, port)
 	defaultDB, err := sql.Open("postgres", defaultConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to default database: %v", err)
 	}
 	defer defaultDB.Close()
+
+	// Test the connection
+	err = defaultDB.Ping()
+	if err != nil {
+		return nil, fmt.Errorf("could not ping default database: %v", err)
+	}
 
 	var exists bool
 	query := fmt.Sprintf("SELECT EXISTS(SELECT datname FROM pg_database WHERE datname = '%s')", dbname)
@@ -48,14 +75,23 @@ func Connect_to_db() (*sql.DB, error) {
 	dbConnStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbname)
 
+	log.Printf("Connecting to target database '%s'", dbname)
 	db, err := sql.Open("postgres", dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to target database: %v", err)
 	}
 
-	sqlBytes, err := ioutil.ReadFile("/Users/marinrazvan/Developer/datalake/schema_registry/sql/create_tables.sql")
+	// Test the connection
+	err = db.Ping()
 	if err != nil {
-		return nil, fmt.Errorf("error reading SQL file: %v", err)
+		return nil, fmt.Errorf("could not ping target database: %v", err)
+	}
+
+	// Update path to use a relative path or environment variable
+	sqlFilePath := getEnv("SQL_FILE_PATH", "/app/sql/create_tables.sql")
+	sqlBytes, err := ioutil.ReadFile(sqlFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading SQL file from '%s': %v", sqlFilePath, err)
 	}
 
 	_, err = db.Exec(string(sqlBytes))
@@ -118,6 +154,7 @@ func GetSchema(db *sql.DB, projectName, schemaName string) (*models.Schema, erro
 
 	return &schema, nil
 }
+
 func UpdateSchema(db *sql.DB, schema models.Schema) error {
 	tx, err := db.Begin()
 	if err != nil {
