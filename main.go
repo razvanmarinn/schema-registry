@@ -1,31 +1,46 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/linkedin/goavro/v2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/gin-gonic/gin"
+	pb "github.com/razvanmarinn/datalake/protobuf"
 	"github.com/razvanmarinn/schema-registry/internal/models"
 
 	"github.com/razvanmarinn/schema-registry/internal/db"
 )
 
-func setupRouter(database *sql.DB) *gin.Engine {
+func setupRouter(database *sql.DB, grpcClient pb.VerificationServiceClient) *gin.Engine {
 	r := gin.Default()
-
-	r.GET("/ping", func(c *gin.Context) {
-		c.String(http.StatusOK, "pong")
-	})
 
 	r.POST("/:project_name/schema", func(c *gin.Context) {
 		var body CreateSchemaBody
 		projectName := c.Param("project_name")
+	
+		checkProjectExists, err := CheckProjectExists(grpcClient, projectName)
+	
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify project existence: " + err.Error()})
+			return
+		}
+	
+		if !checkProjectExists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Project not found: " + projectName})
+			return
+		}
+	
+	
 		if err := c.ShouldBindJSON(&body); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 			return
 		}
 		schema := models.Schema{
@@ -34,12 +49,12 @@ func setupRouter(database *sql.DB) *gin.Engine {
 			Fields:      body.Fields,
 			Version:     1,
 		}
-		err := db.CreateSchema(database, schema)
+		err = db.CreateSchema(database, schema)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create schema in database: " + err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Schema created successfully"})
+		c.JSON(http.StatusCreated, gin.H{"message": "Schema created successfully"})
 	})
 
 	r.PUT("/:project_name/schema", func(c *gin.Context) {
@@ -78,12 +93,17 @@ func setupRouter(database *sql.DB) *gin.Engine {
 
 func main() {
 	database, err := db.Connect_to_db()
+
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer database.Close()
-
-	r := setupRouter(database)
+	identity_service_cnn, err := grpc.Dial("localhost:50056", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to gRPC server: %v", err)
+	}
+	wc := pb.NewVerificationServiceClient(identity_service_cnn)
+	r := setupRouter(database, wc)
 	r.Run(":8081")
 }
 
@@ -121,4 +141,21 @@ func generateAvroSchema(schemaName string, fields []models.Field) (string, error
 	}
 
 	return string(schemaBytes), nil
+}
+
+func CheckProjectExists(client pb.VerificationServiceClient, projectName string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req := &pb.VerifyProjectExistenceRequest{
+		ProjectName: projectName,
+	}
+
+	resp, err := client.VerifyProjectExistence(ctx, req)
+	if err != nil {
+		log.Printf("gRPC VerifyProjectExistence failed for project %s: %v", projectName, err)
+		return false, err
+	}
+
+	return resp.Exists, nil
 }

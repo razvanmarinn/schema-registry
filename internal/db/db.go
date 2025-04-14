@@ -13,17 +13,15 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// GetDBConfig returns database connection parameters from environment variables
-// with fallback to default values
 func GetDBConfig() (string, int, string, string, string) {
-	host := getEnv("DB_HOST", "postgres") // Use Kubernetes service name
+	host := getEnv("DB_HOST", "localhost") // Use Kubernetes service name
 	portStr := getEnv("DB_PORT", "5432")
 	port := 5432 // Default port
 	if portStr != "" {
 		fmt.Sscanf(portStr, "%d", &port)
 	}
-	user := getEnv("DB_USER", "postgresuser")
-	password := getEnv("DB_PASSWORD", "postgrespassword")
+	user := getEnv("DB_USER", "postgres")
+	password := getEnv("DB_PASSWORD", "1234")
 	dbname := getEnv("DB_NAME", "test")
 
 	return host, port, user, password, dbname
@@ -88,7 +86,7 @@ func Connect_to_db() (*sql.DB, error) {
 	}
 
 	// Update path to use a relative path or environment variable
-	sqlFilePath := getEnv("SQL_FILE_PATH", "/app/sql/create_tables.sql")
+	sqlFilePath := getEnv("SQL_FILE_PATH", "/Users/marinrazvan/Developer/datalake/schema_registry/sql/create_tables.sql")
 	sqlBytes, err := ioutil.ReadFile(sqlFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("error reading SQL file from '%s': %v", sqlFilePath, err)
