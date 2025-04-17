@@ -1,13 +1,8 @@
 package handlers
 
 import (
-	"context"
 	"database/sql"
-	"log"
 	"net/http"
-	"time"
-
-	pb "github.com/razvanmarinn/datalake/protobuf"
 
 	"github.com/gin-gonic/gin"
 	"github.com/razvanmarinn/schema-registry/internal/db"
@@ -20,41 +15,12 @@ type CreateSchemaBody struct {
 	Type       string         `json:"type" binding:"required"`
 }
 
-func CheckProjectExists(client pb.VerificationServiceClient, projectName string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req := &pb.VerifyProjectExistenceRequest{
-		ProjectName: projectName,
-	}
-
-	resp, err := client.VerifyProjectExistence(ctx, req)
-	if err != nil {
-		log.Printf("gRPC VerifyProjectExistence failed for project %s: %v", projectName, err)
-		return false, err
-	}
-
-	return resp.Exists, nil
-}
-
-func SetupRouter(database *sql.DB, grpcClient pb.VerificationServiceClient) *gin.Engine {
+func SetupRouter(database *sql.DB) *gin.Engine {
 	r := gin.Default()
 
 	r.POST("/:project_name/schema", func(c *gin.Context) {
 		var body CreateSchemaBody
 		projectName := c.Param("project_name")
-
-		checkProjectExists, err := CheckProjectExists(grpcClient, projectName)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify project existence: " + err.Error()})
-			return
-		}
-
-		if !checkProjectExists {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Project not found: " + projectName})
-			return
-		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
@@ -66,7 +32,7 @@ func SetupRouter(database *sql.DB, grpcClient pb.VerificationServiceClient) *gin
 			Fields:      body.Fields,
 			Version:     1,
 		}
-		err = db.CreateSchema(database, schema)
+		err := db.CreateSchema(database, schema)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create schema in database: " + err.Error()})
 			return
@@ -77,6 +43,7 @@ func SetupRouter(database *sql.DB, grpcClient pb.VerificationServiceClient) *gin
 	r.PUT("/:project_name/schema", func(c *gin.Context) {
 		var body CreateSchemaBody
 		projectName := c.Param("project_name")
+
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return

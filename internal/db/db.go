@@ -86,7 +86,7 @@ func Connect_to_db() (*sql.DB, error) {
 	}
 
 	// Update path to use a relative path or environment variable
-	sqlFilePath := getEnv("SQL_FILE_PATH", "/Users/marinrazvan/Developer/datalake/schema_registry/sql/create_tables.sql")
+	sqlFilePath := getEnv("SQL_FILE_PATH", "/Users/marinrazvan/Developer/datalake/services/schema_registry/sql/create_tables.sql")
 	sqlBytes, err := ioutil.ReadFile(sqlFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("error reading SQL file from '%s': %v", sqlFilePath, err)
